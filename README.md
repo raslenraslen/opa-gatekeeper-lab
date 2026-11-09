@@ -56,6 +56,18 @@ flowchart LR
     G --> D{"breaks a policy?"}
     D -- "yes" --> R["request denied<br/>with the policy message"]
     D -- "no" --> OK["object created"]
+
+    classDef client fill:#8957e5,stroke:#a371f7,color:#ffffff,stroke-width:2px
+    classDef network fill:#1f6feb,stroke:#58a6ff,color:#ffffff,stroke-width:2px
+    classDef controller fill:#238636,stroke:#3fb950,color:#ffffff,stroke-width:2px
+    classDef app fill:#bd561d,stroke:#f0883e,color:#ffffff,stroke-width:2px
+    classDef deny fill:#da3633,stroke:#f85149,color:#ffffff,stroke-width:2px
+    class U client
+    class A network
+    class G,D controller
+    class OK app
+    class R deny
+    linkStyle default stroke:#8b949e,stroke-width:2px
 ```
 
 Each policy is two files:
