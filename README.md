@@ -4,64 +4,36 @@
 ![OPA Gatekeeper](https://img.shields.io/badge/OPA%20Gatekeeper-v3.14.2-7D9AAA?style=flat-square&logo=openpolicyagent&logoColor=white)
 ![Rego](https://img.shields.io/badge/policies-Rego-566366?style=flat-square)
 
-Five Kubernetes admission policies written in Rego for OPA Gatekeeper, each with a manifest that breaks it and a script that proves the cluster rejects that manifest.
+Five security policies for Kubernetes, enforced by OPA Gatekeeper.
+Each policy comes with a test manifest that breaks it, and one script proves the cluster rejects all of them.
+
+**OPA Gatekeeper** is an admission controller: it checks every object sent to the Kubernetes API and refuses the ones that break a policy. Policies are written in **Rego**, the OPA policy language.
 
 ## Policies
 
-| Policy | Rejects | Applies to |
+| Policy | Rejects | Scope |
 |---|---|---|
-| `no-nodeport` | Services of type `NodePort` | all namespaces except `kube-system`, `kube-flannel` and `gatekeeper-system` |
-| `no-latest-tag` | containers whose image ends with `:latest` | all namespaces except `kube-system`, `kube-flannel` and `gatekeeper-system` |
-| `no-privileged` | containers with `privileged: true` | all namespaces except `kube-system`, `kube-flannel` and `gatekeeper-system` |
-| `require-limits` | Pods with a container that has no CPU or memory limit | Pods in `prod` |
-| `run-as-non-root` | Pods with a container that does not run as non-root (`runAsNonRoot: true` on the container, or on the Pod without a container override) | Pods in `prod` |
+| `no-nodeport` | Services of type `NodePort` | cluster-wide* |
+| `no-latest-tag` | containers using an image tagged `:latest` | cluster-wide* |
+| `no-privileged` | containers with `privileged: true` | cluster-wide* |
+| `require-limits` | containers without a CPU or memory limit | Pods in `prod` |
+| `run-as-non-root` | containers not set to run as a non-root user | Pods in `prod` |
 
-The system namespaces are excluded because kube-proxy and Flannel run privileged containers.
+\* Except `kube-system`, `kube-flannel` and `gatekeeper-system`: kube-proxy and Flannel need privileged containers, and Gatekeeper must never block its own pods.
 
-## How it works
-
-```mermaid
-flowchart LR
-    U["kubectl apply"] --> A["API server"]
-    A -- "admission review" --> G["Gatekeeper webhook"]
-    G -- "evaluates every Constraint<br/>with its Rego template" --> D{"violation?"}
-    D -- "yes" --> R["request denied<br/>with the policy message"]
-    D -- "no" --> OK["object created"]
-```
-
-Each policy is a pair of files:
-
-- **`template.yaml`** (ConstraintTemplate): the Rego rule, and the name of the CRD that Gatekeeper generates from it.
-- **`constraint.yaml`** (Constraint): an instance of that CRD that sets the scope (kinds, namespaces) and `enforcementAction: deny`.
-
-## Repository layout
-
-```text
-policies/<policy>/template.yaml     # Rego rule (ConstraintTemplate)
-policies/<policy>/constraint.yaml   # scope and enforcement (Constraint)
-tests/<policy>.yaml                 # a manifest that must be rejected
-scripts/install-gatekeeper.sh       # installs Gatekeeper v3.14.2 and waits for it
-scripts/apply-policies.sh           # applies templates, waits for their CRDs, applies constraints
-scripts/test-policies.sh            # checks that every test manifest is rejected
-cluster-k8s-shell/create-cluster.sh # optional: builds a kubeadm control plane node
-```
-
-## Requirements
-
-- A Kubernetes cluster and `kubectl` 1.23 or newer with cluster-admin rights.
-- No cluster yet? Use [ansible-kubeadm-cluster](https://github.com/raslenraslen/ansible-kubeadm-cluster), or run `bash cluster-k8s-shell/create-cluster.sh` on an Ubuntu VM: it builds a kubeadm 1.28 control plane node with containerd and Flannel, then prints the command to join workers.
+`run-as-non-root` accepts `runAsNonRoot: true` on the container, or on the Pod as long as the container does not set it back to `false`.
 
 ## Quick start
 
-From the repository root:
+You need a Kubernetes cluster and `kubectl` 1.23 or newer with admin rights. From the repository root:
 
 ```bash
-./scripts/install-gatekeeper.sh
-./scripts/apply-policies.sh
-./scripts/test-policies.sh
+./scripts/install-gatekeeper.sh   # install Gatekeeper v3.14.2
+./scripts/apply-policies.sh       # apply the five policies
+./scripts/test-policies.sh        # prove they are enforced
 ```
 
-`test-policies.sh` sends each test manifest through the admission webhook with `kubectl apply --dry-run=server`, so nothing is created in the cluster. It prints one line per test (order may vary) and exits with code 1 if any manifest is accepted:
+The test script sends each test manifest to the cluster in dry-run mode, so **nothing is created**. Expected output (the order may vary):
 
 ```text
 PASS  tests/no-nodeport.yaml
@@ -71,27 +43,61 @@ PASS  tests/require-limits.yaml
 PASS  tests/run-as-non-root.yaml
 ```
 
-To try a policy by hand, apply a test manifest without `--dry-run`. The request is denied with the policy message, for example:
+If any manifest is accepted, the line shows `FAIL` with the cluster's answer, and the script exits with code 1.
+
+**No cluster yet?** Use [ansible-kubeadm-cluster](https://github.com/raslenraslen/ansible-kubeadm-cluster), or run `bash cluster-k8s-shell/create-cluster.sh` on an Ubuntu VM. It builds a kubeadm 1.28 control plane node with containerd and Flannel, and prints the command to join workers.
+
+## How it works
+
+```mermaid
+flowchart LR
+    U["kubectl apply"] --> A["API server"]
+    A -- "admission review" --> G["Gatekeeper webhook"]
+    G --> D{"breaks a policy?"}
+    D -- "yes" --> R["request denied<br/>with the policy message"]
+    D -- "no" --> OK["object created"]
+```
+
+Each policy is two files:
+
+| File | Kind | Role |
+|---|---|---|
+| `template.yaml` | ConstraintTemplate | **The rule**, written in Rego |
+| `constraint.yaml` | Constraint | **Where and how** to apply it: kinds, namespaces, `enforcementAction: deny` |
+
+A denied request looks like this:
 
 ```text
 admission webhook "validation.gatekeeper.sh" denied the request: [no-privileged-containers] Container 'nginx' cannot run in privileged mode
 ```
 
+## Repository layout
+
+```text
+policies/<policy>/template.yaml       the rule (Rego)
+policies/<policy>/constraint.yaml     where and how it applies
+tests/<policy>.yaml                   a manifest that must be rejected
+scripts/install-gatekeeper.sh         installs Gatekeeper and waits until it is ready
+scripts/apply-policies.sh             applies the templates, then the constraints
+scripts/test-policies.sh              checks that every test manifest is rejected
+cluster-k8s-shell/create-cluster.sh   optional: builds a kubeadm control plane node
+```
+
 ## Audit existing resources
 
-Gatekeeper also audits resources that existed before a policy was applied, every 60 seconds by default. Nothing is blocked; violations are reported on the constraint:
+Policies also apply to resources that existed **before** them. Gatekeeper does not block those; it audits them every 60 seconds and reports the violations:
 
 ```bash
-kubectl get constraints                                          # TOTAL-VIOLATIONS column
-kubectl describe k8scontainernoprivileged no-privileged-containers  # details of each violation
+kubectl get constraints     # see the TOTAL-VIOLATIONS column
+kubectl describe k8scontainernoprivileged no-privileged-containers   # one policy in detail
 ```
 
 ## Add a policy
 
-1. Create `policies/<name>/template.yaml` and `policies/<name>/constraint.yaml`.
-2. Add `tests/<name>.yaml`, a manifest that breaks only this policy.
-3. Add the test and the expected message to the `expected` list in `scripts/test-policies.sh`.
-4. Run `./scripts/apply-policies.sh` and `./scripts/test-policies.sh`.
+1. Write `policies/<name>/template.yaml` and `policies/<name>/constraint.yaml`.
+2. Write `tests/<name>.yaml`, a manifest that breaks this policy and no other.
+3. Add the test file and its expected message to the `expected` list in `scripts/test-policies.sh`.
+4. Run `./scripts/apply-policies.sh`, then `./scripts/test-policies.sh`.
 
 ## Remove everything
 
@@ -102,6 +108,6 @@ kubectl delete -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper
 
 ## Limitations
 
-- The policies check the main containers only, not init containers or ephemeral containers.
-- `no-latest-tag` does not catch an image without a tag (`nginx`), which also resolves to `latest`.
-- `require-limits` and `run-as-non-root` check Pods. A Deployment in `prod` that breaks them is accepted, but its Pods are rejected when the ReplicaSet creates them; the reason shows in `kubectl describe replicaset`.
+- Only the main containers are checked, not init or ephemeral containers.
+- `no-latest-tag` does not catch an image with no tag at all (`nginx`), even though it also pulls `latest`.
+- `require-limits` and `run-as-non-root` check Pods, not Deployments. A Deployment in `prod` is accepted, but its Pods are then refused: the reason appears in `kubectl describe replicaset`.
