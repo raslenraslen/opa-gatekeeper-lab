@@ -1,6 +1,0 @@
-apiVersion: constraints.gatekeeper.sh/v1beta1
-kind: K8sServiceNodePortForbidden
-metadata:
-  name: forbid-nodeport-services
-spec:
-  enforcementAction: deny

@@ -1,7 +1,0 @@
----
-- name: Deploy Kubernetes Cluster
-  hosts: all
-  become: true
-  gather_facts: true  
-  roles:
-    - kubernetes_cluster

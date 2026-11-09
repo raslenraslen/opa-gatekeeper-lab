@@ -131,7 +131,7 @@ initialize_cluster() {
 
     info "Installation du CNI (Container Network Interface) - Flannel"
     # Note: L'utilisateur doit avoir les permissions Kubectl (fait juste au-dessus)
-    kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+    kubectl apply -f https://github.com/flannel-io/flannel/releases/download/v0.27.3/kube-flannel.yml
 }
 
 # --- ÉTAPE 6: AFFICHAGE DE LA COMMANDE DE JONCTION ---
